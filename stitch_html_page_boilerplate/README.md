@@ -1,0 +1,31 @@
+# Bhutan Druk Crypto
+
+Customer and owner screens are separate. The customer application is `code.html`; the owner console is `owner-backend/OwnerPanel.html`; Google Apps Script backend code is `owner-backend/Code.gs`.
+
+## Private owner console and public customer routes
+
+1. Create an Apps Script project under the Google account that will own the service. Add `Code.gs` from `owner-backend/Code.gs`.
+2. Add an HTML file named `Index` and copy `code.html` into it. Add `OwnerPanel` from `owner-backend/OwnerPanel.html` and `PublicSupport` from `owner-backend/PublicSupport.html`.
+3. Run `setupBackend()` while signed into the owner account. Grant the requested Sheets, email, time-driven trigger, and external request permissions when prompted. This also creates the Security Events sheet and one hourly report trigger.
+4. Create a private deployment with **Execute as: User accessing the web app** and **Who has access: Only myself**. Sign in with the same owner Google account used for setup. Its default `/exec` route opens the owner console. Keep this URL private.
+5. Create a separate public deployment with **Execute as: Me** and public access. The customer app is `/exec?view=app`; the complaint form is `/exec?view=support`. The default route still requires owner access.
+6. Set Script Properties `OWNER_PANEL_URL` to the private `/exec` URL and `PUBLIC_SUPPORT_URL` to the public `/exec?view=support` URL.
+
+The customer interface contains no owner forms, staff controls, or bot token fields. Owner access is enforced by the private Apps Script deployment and `requireOwner_()`. Staff account-scoping and customer balance controls are not implemented. The private owner console includes owner-managed P2P advertisement records, a security event feed, and KYC/support queues. Active ads require an owner-entered verified balance of at least 1,000 USDT and a verification reference; this is a manual attestation, not chain verification.
+
+## Current implementation boundary
+
+The Apps Script backend stores KYC tracking records and support requests in the owner's Google Sheet, sends email notifications, and lets the owner review those records. The customer support form and broker-assisted trade request form call the public Apps Script endpoint when served by Apps Script. The P2P screen lets customers select a fiat currency preference, including BTN, INR, and NPR; selection does not imply payment support. No fake rates, customer profiles, or offers are preloaded.
+
+Customer registration/login and customer KYC document intake are not connected. The P2P request workflow accepts a customer inquiry against an active owner-published ad, stores it in the private Trade Requests sheet, alerts the owner, and allows the owner to assign a real provider/team and email status updates. This is a broker-assisted request workflow only: it does not reserve funds, process payment, hold/release crypto, or provide escrow. Do not describe a request as a completed or guaranteed trade. Wallet ledger, withdrawals, customer seller accounts, staff permissions, and financial reports are not connected. The private owner console stores the Telegram bot token and owner chat ID as Script Properties. Telegram alerts are sent for support/KYC records, denied owner access, and hourly security summaries; a test-message action is available in the console.
+
+Never send bot tokens, passwords, or customer identity documents through chat.
+## P2P ads, Terms, Telegram, and security reporting
+
+- Create/edit/pause/delete ads only in the private Owner console. The public app receives only active listing fields; owner verification references are not sent to the customer page.
+- The app displays only active owner-published ads for the selected fiat currency. A customer can submit a broker-assisted trade request; the owner assigns a provider/team and updates the customer by email. This creates an inquiry/order record only and does not execute payment, reserve funds, or provide escrow.
+- Open the Terms draft from the customer app footer. After public deployment, share the app route as `PUBLIC_APP_URL#/terms` (the Apps Script app is served at `.../exec?view=app`). This is a review draft, not publication-ready legal advice. Customer sign-up consent cannot be captured until registration and consent storage exist.
+- For Telegram: start your bot in Telegram first. In the private owner console, enter the BotFather token and your numeric chat ID, save, then use **Send test message**. You do not need to paste the token into chat or source code. Telegram requires a chat destination and the user must initiate a private bot chat before it can message them.
+- The owner panel refreshes application security events once per minute. `setupBackend()` installs a time-driven Apps Script trigger that emails an hourly summary to the Google owner account and sends the summary to Telegram when configured. Signals include owner-access denials, selected rejected support submissions, throttling/honeypot events, and ad validation/activation blocks.
+- This is application-level logging only. Apps Script does not provide this code with complete network intrusion monitoring, reliable requester IPs, hosting-provider security alerts, or detection of attacks outside these app endpoints. It cannot guarantee that every attack is detected or reported.
+- After changing the Apps Script source, update the deployment version for both the private owner deployment and public customer deployment. Verify the hourly trigger under Apps Script **Triggers** and verify the owner receives an hourly email and, when configured, Telegram report.
