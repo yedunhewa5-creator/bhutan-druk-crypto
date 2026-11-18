@@ -5,6 +5,7 @@ const TAB_AUDIT = 'Audit';
 const TAB_ADS = 'P2P Ads';
 const TAB_SECURITY = 'Security Events';
 const TAB_ORDERS = 'Trade Requests';
+const TAB_TRADE_NOTIFICATIONS = 'Trade Notification Queue';
 
 function doGet(e) {
   if (e && e.parameter && e.parameter.view === 'support') {
@@ -39,7 +40,9 @@ function setupBackend() {
   ensureTab_(book, TAB_ADS, ['id', 'createdAt', 'updatedAt', 'country', 'countryCode', 'fiat', 'side', 'price', 'availableUsdt', 'minimumFiat', 'maximumFiat', 'paymentMethods', 'verifiedBalanceUsdt', 'verificationReference', 'status']);
   ensureTab_(book, TAB_SECURITY, ['createdAt', 'event', 'actor', 'details']);
   ensureTab_(book, TAB_ORDERS, ['id', 'createdAt', 'adId', 'side', 'fiat', 'price', 'amountUsdt', 'amountFiat', 'name', 'email', 'whatsapp', 'status', 'provider', 'ownerNote']);
+  ensureTab_(book, TAB_TRADE_NOTIFICATIONS, ['requestId', 'createdAt', 'side', 'amountUsdt', 'amountFiat', 'fiat', 'deliveredAt']);
   ensureSecurityReportTrigger_();
+  ensureTradeRequestDigestTrigger_();
   return { owner: owner, dataSheet: book.getUrl() };
 }
 
@@ -300,14 +303,56 @@ function submitTradeRequest(request) {
       id, new Date(), adId, ad.side, ad.fiat, Number(ad.price), amountUsdt, amountFiat,
       sheetSafe_(name), sheetSafe_(email), sheetSafe_(whatsapp), 'Request received', '', ''
     ]);
+    dataBook_().getSheetByName(TAB_TRADE_NOTIFICATIONS).appendRow([
+      id, new Date(), ad.side, amountUsdt, amountFiat, ad.fiat, ''
+    ]);
     audit_('PUBLIC_TRADE_REQUEST', 'TRADE_REQUEST_RECEIVED', id, 'Ad ' + adId + '; ' + amountUsdt + ' USDT');
   } finally {
     lock.releaseLock();
   }
   try { notifyOwner_('New P2P trade request', 'A customer requested a broker-assisted trade.\nRequest: ' + order.id + '\nAd: ' + order.ad.id + '\nSide: ' + order.ad.side + '\nAmount: ' + order.amountUsdt + ' USDT / ' + order.amountFiat + ' ' + order.ad.fiat + '\nCustomer: ' + order.name + ' (' + order.email + ')\nWhatsApp: ' + order.whatsapp + '\nAssign a provider and contact the customer from the private owner console.'); } catch (error) { console.error('Trade request saved; owner email notification failed.'); }
-  notifyBot_('BHUTAN DRUK CRYPTO: New broker-assisted P2P request ' + order.id + '. Review it in the private owner panel.');
   try { MailApp.sendEmail(order.email, 'We received your P2P request', 'Your request ' + order.id + ' was received. The Bhutan Druk Crypto team will contact you to confirm provider availability and payment details. No payment or escrow has been initiated.'); } catch (error) { console.error('Trade request saved; customer acknowledgement failed.'); }
   return { id: order.id, status: 'Request received' };
+}
+
+function ensureTradeRequestDigestTrigger_() {
+  ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === 'sendTradeRequestDigest_').forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger('sendTradeRequestDigest_').timeBased().everyMinutes(5).create();
+}
+
+/** Sends a five-minute digest of genuine customer requests; these are not completed trades. */
+function sendTradeRequestDigest_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    console.warn('Trade request digest skipped because another backend operation holds the lock.');
+    return;
+  }
+  try {
+    const sheet = dataBook_().getSheetByName(TAB_TRADE_NOTIFICATIONS);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const rows = sheet.getDataRange().getValues().slice(1);
+    const pending = rows.reduce((items, row, index) => {
+      if (row[0] && !row[6]) items.push({ rowNumber: index + 2, values: row });
+      return items;
+    }, []).slice(0, 20);
+    if (!pending.length) return;
+    const message = '[BHUTAN DRUK CRYPTO] ' + pending.length + ' new broker-assisted request(s)\n' +
+      'Requests only; no trade, payment, or escrow has been executed.\n' +
+      pending.map(item => {
+        const row = item.values;
+        return 'Request ' + row[0] + ' · ' + row[2] + ' · ' + Number(row[3]).toFixed(4) +
+          ' USDT / ' + Number(row[4]).toFixed(2) + ' ' + row[5];
+      }).join('\n') +
+      (rows.filter(row => row[0] && !row[6]).length > pending.length ? '\nMore requests will be included in the next digest.' : '');
+    if (!sendBotMessage_(message)) {
+      console.warn('Trade request digest was not sent; queued requests will be retried.');
+      return;
+    }
+    const deliveredAt = new Date();
+    pending.forEach(item => sheet.getRange(item.rowNumber, 7).setValue(deliveredAt));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function updateTradeRequest(id, status, provider, ownerNote) {
